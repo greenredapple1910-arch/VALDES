@@ -10,6 +10,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 async function startServer() {
   const app = express();
+  app.set('trust proxy', true);
   const server = createServer(app);
   const io = new Server(server, {
     cors: { origin: "*" }
@@ -33,7 +34,7 @@ async function startServer() {
 
   const insertMsg = db.prepare('INSERT INTO messages (to_key, from_key, payload) VALUES (?, ?, ?)');
   const getHistory = db.prepare('SELECT * FROM messages WHERE to_key = ? ORDER BY created_at ASC');
-  const cleanOldMsg = db.prepare('DELETE FROM messages WHERE created_at < datetime(\'now\', \'-30 days\')');
+  const cleanOldMsg = db.prepare('DELETE FROM messages WHERE created_at < datetime("now", "-30 days")');
 
   // Run GC every hour representing 30 days retention
   setInterval(() => {
@@ -48,7 +49,31 @@ async function startServer() {
   const users = new Map<string, string>();
 
   io.on("connection", (socket) => {
-    console.log(`[SOCKET CONNECTED] ${socket.id}`);
+    // Cloudflare Proxy IP Extraction
+    const cfIp = socket.handshake.headers['cf-connecting-ip'];
+    const forwardedFor = socket.handshake.headers['x-forwarded-for'];
+    const rawIp = cfIp || forwardedFor || socket.handshake.address || "unknown";
+    
+    let realIp = Array.isArray(rawIp) ? rawIp[0] : rawIp as string;
+    
+    // Mask the IP for privacy (e.g. 192.168.1.***)
+    let maskedIp = realIp;
+    if (realIp.includes('.')) {
+      const parts = realIp.split('.');
+      if (parts.length === 4) {
+        parts[3] = '***';
+        maskedIp = parts.join('.');
+      }
+    } else if (realIp.includes(':')) {
+      const parts = realIp.split(':');
+      if (parts.length >= 3) {
+        parts[parts.length - 1] = '***';
+        parts[parts.length - 2] = '***';
+        maskedIp = parts.join(':');
+      }
+    }
+
+    console.log(`[SOCKET] Connected: ${socket.id} | IP: ${maskedIp}`);
     
     // Reverse lookup helper
     let userPublicKey: string | null = null;

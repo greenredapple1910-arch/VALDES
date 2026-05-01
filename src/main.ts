@@ -64,6 +64,19 @@ const btnCopyK1 = document.getElementById('btn-copy-k1') as HTMLButtonElement | 
 const btnCopyK2 = document.getElementById('btn-copy-k2') as HTMLButtonElement | null;
 const btnCopyPeerK2 = document.getElementById('btn-copy-peer-k2') as HTMLButtonElement | null;
 
+// --- SECURE CONTEXT GUARD ---
+if (!window.isSecureContext) {
+  authForm.style.display = 'none';
+  if (btnGeneratePair && btnGeneratePair.parentElement) {
+    btnGeneratePair.parentElement.style.display = 'none';
+  }
+  
+  const errorMsg = document.createElement('div');
+  errorMsg.className = 'text-red-500 font-mono text-xs text-center border border-red-500 p-4 mt-4 bg-[#1a0505] uppercase tracking-widest';
+  errorMsg.textContent = '[ SECURITY LOCK ]: E2EE requires a Secure Context. You must access this node via HTTPS.';
+  screenAuth.appendChild(errorMsg);
+}
+
 // --- CLOCK IMPL ---
 function updateClock() {
   if (clockEl) {
