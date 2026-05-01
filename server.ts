@@ -33,7 +33,7 @@ async function startServer() {
 
   const insertMsg = db.prepare('INSERT INTO messages (to_key, from_key, payload) VALUES (?, ?, ?)');
   const getHistory = db.prepare('SELECT * FROM messages WHERE to_key = ? ORDER BY created_at ASC');
-  const cleanOldMsg = db.prepare('DELETE FROM messages WHERE created_at < datetime("now", "-30 days")');
+  const cleanOldMsg = db.prepare('DELETE FROM messages WHERE created_at < datetime(\'now\', \'-30 days\')');
 
   // Run GC every hour representing 30 days retention
   setInterval(() => {
