@@ -4,6 +4,7 @@ import { Server } from "socket.io";
 import { createServer as createViteServer } from "vite";
 import path from "path";
 import { fileURLToPath } from "url";
+import Database from "better-sqlite3";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -15,6 +16,33 @@ async function startServer() {
   });
 
   const PORT = 3000;
+
+  // --- DB Initialization ---
+  const db = new Database('valdes.db');
+  db.pragma('journal_mode = WAL');
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS messages (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      to_key TEXT NOT NULL,
+      from_key TEXT NOT NULL,
+      payload TEXT NOT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
+  const insertMsg = db.prepare('INSERT INTO messages (to_key, from_key, payload) VALUES (?, ?, ?)');
+  const getHistory = db.prepare('SELECT * FROM messages WHERE to_key = ? ORDER BY created_at ASC');
+  const cleanOldMsg = db.prepare('DELETE FROM messages WHERE created_at < datetime("now", "-30 days")');
+
+  // Run GC every hour representing 30 days retention
+  setInterval(() => {
+    try {
+      cleanOldMsg.run();
+    } catch (err) {
+      console.error("GC Error:", err);
+    }
+  }, 1000 * 60 * 60);
 
   // In-memory mapping: publicKey -> socketId
   const users = new Map<string, string>();
@@ -30,21 +58,36 @@ async function startServer() {
       userPublicKey = publicKey;
       users.set(publicKey, socket.id);
       console.log(`[REGISTERED] Key: ...${publicKey.slice(-5)} -> Socket: ${socket.id}`);
+      
+      // Dispatch persistent mailbox history to user
+      try {
+        const history = getHistory.all(publicKey);
+        socket.emit("history", history);
+      } catch (error) {
+        console.error("DB Error fetching history:", error);
+      }
     });
 
-    // 2. Blind Relay
+    // 2. Encrypted Mailbox and Relay
     socket.on("message", (payload: { to: string; from: string; data: string }) => {
+      let insertedId: number | bigint = 0;
+      try {
+        const result = insertMsg.run(payload.to, payload.from, payload.data);
+        insertedId = result.lastInsertRowid;
+      } catch (error) {
+        console.error("DB Error inserting message:", error);
+        return;
+      }
+
       const targetSocketId = users.get(payload.to);
       if (targetSocketId) {
-        // Emit only to the target socket
+        // Target is online, emit live
         io.to(targetSocketId).emit("receive", {
-          fromPublicKey: payload.from, // So the receiver knows who it's from
-          data: payload.data
+          id: insertedId,
+          fromPublicKey: payload.from,
+          data: payload.data,
+          created_at: new Date().toISOString()
         });
-        // Note: No console log of payload.data to maintain blind relay integrity
-      } else {
-        // Optional: Notify sender that target is offline
-        // console.log(`[RELAY FAILED] Target not found: ...${payload.to.slice(-5)}`);
       }
     });
 

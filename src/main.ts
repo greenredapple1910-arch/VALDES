@@ -14,6 +14,7 @@ interface Session {
   peerPublicKey: CryptoKey;
   sharedAesKey: CryptoKey;
   messages: Message[];
+  processedIds: Set<number>;
 }
 
 interface AppStateStructure {
@@ -138,10 +139,8 @@ authForm.addEventListener('submit', async (e) => {
       AppState.socket?.emit('register', AppState.localPublicKeyBase64);
       console.log('Connected to Relay Server');
     });
-
-    // Handle Incoming E2EE Messages
-    AppState.socket.on('receive', async (payload: { fromPublicKey: string; data: string }) => {
-      // 1. Find or create session using the peer's public key
+    
+    async function processIncomingMessage(payload: { id: number, fromPublicKey: string, data: string, created_at?: string }) {
       let session = AppState.sessions.get(payload.fromPublicKey);
       if (!session) {
         try {
@@ -151,33 +150,67 @@ authForm.addEventListener('submit', async (e) => {
             peerPublicKeyBase64: payload.fromPublicKey,
             peerPublicKey: peerPubCryptoKey,
             sharedAesKey: sharedAesKey,
-            messages: []
+            messages: [],
+            processedIds: new Set()
           };
           AppState.sessions.set(payload.fromPublicKey, session);
-          
-          // Re-render chat list to show new contact if they just messaged us
-          if (!screenChatList.classList.contains('hidden')) {
-             renderChatList();
-          }
         } catch (err) {
           console.error("Failed to establish session for incoming message", err);
-          return;
+          return false;
         }
       }
 
-      // 2. Decrypt the payload
+      if (session.processedIds.has(payload.id)) return false;
+      session.processedIds.add(payload.id);
+
       try {
         const decryptedText = await decryptMessage(payload.data, session.sharedAesKey);
         
-        // 3. Save to state and render if active
-        const msg: Message = { text: decryptedText, isMine: false, timestamp: new Date() };
-        session.messages.push(msg);
-
-        if (AppState.activeSessionId === payload.fromPublicKey) {
-          appendMessage(msg);
+        let ts = new Date();
+        if (payload.created_at) {
+          const dateStr = payload.created_at.includes('T') ? payload.created_at : payload.created_at.replace(' ', 'T') + 'Z';
+          ts = new Date(dateStr);
         }
+
+        const msg: Message = { text: decryptedText, isMine: false, timestamp: ts };
+        session.messages.push(msg);
+        session.messages.sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
+        return true;
       } catch (err) {
         console.error("Decryption failed for incoming message.", err);
+        return false;
+      }
+    }
+
+    AppState.socket.on('history', async (messages: any[]) => {
+      let hasChanges = false;
+      for (const msg of messages) {
+        const changed = await processIncomingMessage({
+          id: msg.id,
+          fromPublicKey: msg.from_key,
+          data: msg.payload,
+          created_at: msg.created_at
+        });
+        if (changed) hasChanges = true;
+      }
+      if (hasChanges) {
+        if (!screenChatList.classList.contains('hidden')) {
+          renderChatList();
+        } else if (!screenChat.classList.contains('hidden')) {
+          renderChat();
+        }
+      }
+    });
+
+    // Handle Incoming E2EE Messages
+    AppState.socket.on('receive', async (payload: { id: number; fromPublicKey: string; data: string; created_at?: string }) => {
+      const changed = await processIncomingMessage(payload);
+      if (changed) {
+        if (!screenChatList.classList.contains('hidden')) {
+          renderChatList();
+        } else if (!screenChat.classList.contains('hidden')) {
+          renderChat();
+        }
       }
     });
 
@@ -226,7 +259,8 @@ newChatForm.addEventListener('submit', async (e) => {
         peerPublicKeyBase64: peerKeyBase64,
         peerPublicKey: peerPubCryptoKey,
         sharedAesKey: sharedAesKey,
-        messages: [] // New blank history
+        messages: [], // New blank history
+        processedIds: new Set()
       });
     } catch (err) {
       console.error(err);
@@ -306,7 +340,7 @@ function renderChat() {
     chatContainer.lastChild?.remove();
   }
 
-  session.messages.forEach(appendMessage);
+  session.messages.forEach(msg => appendMessage(msg, false));
 }
 
 function appendMessage(msg: Message, pendingStatus: boolean = false): { msgEl: HTMLDivElement, setSentIndicator: () => void } {
