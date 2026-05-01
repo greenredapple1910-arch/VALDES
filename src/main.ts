@@ -109,9 +109,7 @@ function showScreen(screen: 'auth' | 'chat-list' | 'chat') {
 btnGeneratePair.addEventListener('click', async () => {
   try {
     const keys = await generateKeyPair();
-    // We bind Private and Public into a single encoded string for seamless copying.
-    const comboKey = `${keys.key1}:${keys.key2}`;
-    inputPrivateKey.value = comboKey;
+    inputPrivateKey.value = keys.key1;
     alert(`NEW KEY PAIR GENERATED\n\nYour Public Key (Share this to receive messages!):\n${keys.key2}`);
   } catch (err) {
     console.error(err);
@@ -125,18 +123,27 @@ authForm.addEventListener('submit', async (e) => {
   if (!val) return;
 
   try {
-    // Separate private and public keys if combo mode
-    let privBase64 = val;
-    let pubBase64 = "UNKNOWN_PUB_KEY";
-    
-    if (val.includes(':')) {
-      [privBase64, pubBase64] = val.split(':');
+    let privBase64 = '';
+    let pubBase64 = '';
+
+    try {
+      const decodedStr = window.atob(val);
+      const parsedBundle = JSON.parse(decodedStr);
+      if (parsedBundle.prv && parsedBundle.pub) {
+        privBase64 = parsedBundle.prv;
+        pubBase64 = parsedBundle.pub;
+      } else {
+        throw new Error("Missing keys in bundle");
+      }
+    } catch (e) {
+      alert("Invalid Key Format. Please generate a new key pair.");
+      return;
     }
 
     const importedPrivKey = await importKey(privBase64, 'private');
     
     // Save to volatile state
-    AppState.localPrivateKeyBase64 = privBase64;
+    AppState.localPrivateKeyBase64 = val; // Store the original bundle so copying works correctly
     AppState.localPublicKeyBase64 = pubBase64;
     AppState.localPrivateKey = importedPrivKey;
 

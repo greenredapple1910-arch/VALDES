@@ -55,9 +55,14 @@ export async function generateKeyPair(): Promise<{ key1: string; key2: string }>
     const privateKeyBuffer = await window.crypto.subtle.exportKey("pkcs8", keyPair.privateKey);
     const publicKeyBuffer = await window.crypto.subtle.exportKey("spki", keyPair.publicKey);
 
+    const prvBase64 = arrayBufferToBase64(privateKeyBuffer);
+    const pubBase64 = arrayBufferToBase64(publicKeyBuffer);
+    const bundleJSON = JSON.stringify({ prv: prvBase64, pub: pubBase64 });
+    const bundleBase64 = window.btoa(bundleJSON);
+
     return {
-      key1: arrayBufferToBase64(privateKeyBuffer), // Private Auth Key
-      key2: arrayBufferToBase64(publicKeyBuffer),  // Public Identity Key
+      key1: bundleBase64, // Private Auth Key
+      key2: pubBase64,  // Public Identity Key
     };
   } catch (error) {
     console.error("Error generating key pair:", error);
@@ -211,11 +216,13 @@ export async function decryptMessage(encryptedBase64: string, sharedAesKey: Cryp
     console.log("Bob Public Key (Base64):", bobKeys.key2);
 
     // 2. Key Derivation
-    const alicePrivKey = await importKey(aliceKeys.key1, 'private');
+    const aliceBundle = JSON.parse(window.atob(aliceKeys.key1));
+    const alicePrivKey = await importKey(aliceBundle.prv, 'private');
     const bobPubKey = await importKey(bobKeys.key2, 'public');
     const sharedSecretA = await deriveSharedSecret(alicePrivKey, bobPubKey);
 
-    const bobPrivKey = await importKey(bobKeys.key1, 'private');
+    const bobBundle = JSON.parse(window.atob(bobKeys.key1));
+    const bobPrivKey = await importKey(bobBundle.prv, 'private');
     const alicePubKey = await importKey(aliceKeys.key2, 'public');
     const sharedSecretB = await deriveSharedSecret(bobPrivKey, alicePubKey);
 
